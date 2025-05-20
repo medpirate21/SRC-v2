@@ -11,6 +11,7 @@ from utils import get_message_type, MediaHandler, cleanup_old_status_files
 from pyrogram.handlers import CallbackQueryHandler
 from task_manager import task_manager
 from settings import Settings
+from video_handler import split_video, get_video_duration
 
 def get_peer_type_new(peer_id: int) -> str:
     peer_id_str = str(peer_id)
@@ -179,8 +180,21 @@ class TelegramBot:
 
             try:
                 msg = await user_session.get_messages(chatid, msgid)
+                if msg is None:
+                    await self.bot.send_message(
+                        message.chat.id,
+                        "**Message not found. The message may have been deleted or you may not have access to it.**",
+                        reply_to_message_id=message.id
+                    )
+                    return
+
                 msg_type = get_message_type(msg)
 
+                # Special handling for large videos
+                if msg_type == "Video" and msg.video and msg.video.file_size > 2*1024*1024*1024:  # 2GB
+                    await self.handle_large_video(message, msg)
+                    return
+                
                 if msg_type == "Text":
                     await self.bot.send_message(
                         message.chat.id,

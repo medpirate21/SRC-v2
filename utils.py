@@ -10,6 +10,7 @@ from pyrogram.types import Message
 from config import DUMP_CHANNEL_ID
 from PIL import Image
 from task_manager import task_manager
+from video_handler import split_video, cleanup_split_files
 
 # Remove MongoDB imports and initialization since it's in main.py
 logger = logging.getLogger(__name__)
@@ -380,3 +381,50 @@ class MediaHandler:
                 caption_entities=entities, progress=progress,
                 progress_args=[message, "up"]
             )
+
+    async def handle_large_video(self, message: Message, msg: Message):
+        """Handle videos larger than 2GB by splitting"""
+        status_msg = await self.bot.send_message(
+            message.chat.id,
+            "📥 **Processing large video...\nDownloading and splitting into parts...**",
+            reply_to_message_id=message.id
+        )
+        
+        try:
+            # Download video
+            file_path = await msg.download()
+            
+            # Split video
+            split_files = await split_video(file_path)
+            
+            # Upload parts
+            for i, part_path in enumerate(split_files, 1):
+                caption = f"**{msg.caption or msg.video.file_name}**\n"
+                caption += f"Part {i} of {len(split_files)}\n"
+                if i == 1:
+                    caption += "\n**Note:** Use any video joiner to combine parts after download."
+                
+                await self.bot.send_video(
+                    message.chat.id,
+                    video=part_path,
+                    caption=caption,
+                    thumb=msg.video.thumbs[0].file_id if msg.video.thumbs else None,
+                    progress=self.progress_callback,
+                    progress_args=(status_msg,)
+                )
+                
+            await status_msg.edit_text("✅ **Video parts uploaded successfully!**")
+            
+        except Exception as e:
+            logger.error(f"Error handling large video: {e}")
+            await status_msg.edit_text(f"❌ **Error processing video: {str(e)}**")
+            
+        finally:
+            # Cleanup
+            if 'file_path' in locals():
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            if 'split_files' in locals():
+                await cleanup_split_files(split_files)
